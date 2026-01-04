@@ -1,5 +1,8 @@
+<img width="1751" height="900" alt="image" src="https://github.com/user-attachments/assets/baa6d6e0-1752-42e6-9eda-29930f8b9947" />
+
 
 ## 更新记录
+2026-01-03: webui控制
 2026-01-02：新增多token池支持，支持动态管理号池（列举/新增/删除）
 2026-01-02：MCP 响应现在包含 `sources` 字段，返回搜索结果的来源链接
 2025-12-31：增加健康检查endpoint， http://127.0.0.1:8000/health
