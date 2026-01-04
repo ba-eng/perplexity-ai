@@ -11,13 +11,15 @@ services:
     environment:
       # MCP 认证密钥
       - MCP_TOKEN=${MCP_TOKEN:-sk-123456}
-      # Perplexity 账户凭证 (可选，用于高级功能)
-      - PPLX_NEXT_AUTH_CSRF_TOKEN=${PPLX_NEXT_AUTH_CSRF_TOKEN:-}
-      - PPLX_SESSION_TOKEN=${PPLX_SESSION_TOKEN:-}
+      # 管理员 Token（用于号池管理 API）
+      - PPLX_ADMIN_TOKEN=${PPLX_ADMIN_TOKEN:-}
       # SOCKS 代理配置 (可选)
       # 格式: socks5://[user[:pass]@]host[:port][#remark]
       # 示例: socks5://127.0.0.1:1080 或 socks5://user:pass@proxy.example.com:1080
       - SOCKS_PROXY=${SOCKS_PROXY:-}
+    volumes:
+      # 挂载 token 池配置文件（必需）
+      - ./token_pool_config.json:/app/token_pool_config.json:ro
     restart: unless-stopped
     # 资源限制 (可选)
     deploy:

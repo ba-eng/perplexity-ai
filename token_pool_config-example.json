@@ -1,14 +1,14 @@
 {
   "tokens": [
     {
-      "id": "1",
-      "csrf_token": "123",
-      "session_token": "123"
+      "id": "account1@example.com",
+      "csrf_token": "your-csrf-token-from-cookie",
+      "session_token": "your-session-token-from-cookie"
     },
     {
-      "id": "2",
-      "csrf_token": "123",
-      "session_token": "123"
+      "id": "account2@example.com",
+      "csrf_token": "your-csrf-token-from-cookie",
+      "session_token": "your-session-token-from-cookie"
     }
   ]
 }
