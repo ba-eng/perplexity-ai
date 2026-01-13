@@ -2,6 +2,7 @@
 
 
 ## 更新记录
+2026-01-13: 新增心跳检测功能，支持定时检测token健康状态并通过Telegram通知
 2026-01-03: webui控制
 2026-01-02：新增多token池支持，支持动态管理号池（列举/新增/删除）
 2026-01-02：MCP 响应现在包含 `sources` 字段，返回搜索结果的来源链接
@@ -25,6 +26,13 @@ cp token_pool_config-example.json token_pool_config.json
 
 ```json
 {
+  "heart_beat": {
+    "enable": true,
+    "question": "今天是几号？",
+    "interval": 6,
+    "tg_bot_token": "your-telegram-bot-token",
+    "tg_chat_id": "your-telegram-chat-id"
+  },
   "tokens": [
     {
       "id": "account1@example.com",
@@ -43,6 +51,20 @@ cp token_pool_config-example.json token_pool_config.json
 > **获取 Token 的方法：** 打开 perplexity.ai -> F12 开发者工具 -> Application -> Cookies
 > - `csrf_token` 对应 `next-auth.csrf-token`
 > - `session_token` 对应 `__Secure-next-auth.session-token`
+
+### 心跳检测配置（可选）
+
+心跳检测功能可以定期检查每个 token 的健康状态，并通过 Telegram 通知结果：
+
+| 配置项 | 说明 |
+|--------|------|
+| `enable` | 是否启用心跳检测 |
+| `question` | 用于检测的测试问题 |
+| `interval` | 检测间隔时间（小时） |
+| `tg_bot_token` | Telegram Bot Token（用于发送通知） |
+| `tg_chat_id` | Telegram Chat ID（接收通知的聊天ID） |
+
+> 如果不需要心跳检测功能，可以省略 `heart_beat` 配置或将 `enable` 设为 `false`
 
 ### 2. 启动服务
 
