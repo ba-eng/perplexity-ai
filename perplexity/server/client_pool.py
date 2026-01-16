@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from .client import Client
+from ..client import Client
 
 logger = logging.getLogger(__name__)
 

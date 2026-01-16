@@ -17,7 +17,7 @@ class TestClientWrapper:
 
     def test_initial_state(self):
         """Test that ClientWrapper initializes with correct default state."""
-        from perplexity.client_pool import ClientWrapper
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
@@ -31,7 +31,7 @@ class TestClientWrapper:
 
     def test_mark_success(self):
         """Test that mark_success increments request count and resets failure state."""
-        from perplexity.client_pool import ClientWrapper
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
@@ -49,32 +49,32 @@ class TestClientWrapper:
 
     def test_mark_failure_exponential_backoff(self):
         """Test that mark_failure applies exponential backoff."""
-        from perplexity.client_pool import ClientWrapper
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
 
-        # First failure: 2^1 = 2 seconds
+        # First failure: 60 seconds (INITIAL_BACKOFF)
         wrapper.mark_failure()
         assert wrapper.fail_count == 1
         assert wrapper.available_after > time.time()
-        assert wrapper.available_after <= time.time() + 2
+        assert wrapper.available_after <= time.time() + ClientWrapper.INITIAL_BACKOFF + 1
 
-        # Second failure: 2^2 = 4 seconds
+        # Second failure: 120 seconds (60 * 2^1)
         wrapper.mark_failure()
         assert wrapper.fail_count == 2
         assert wrapper.available_after > time.time()
-        assert wrapper.available_after <= time.time() + 4
+        assert wrapper.available_after <= time.time() + ClientWrapper.INITIAL_BACKOFF * 2 + 1
 
-        # Third failure: 2^3 = 8 seconds
+        # Third failure: 240 seconds (60 * 2^2)
         wrapper.mark_failure()
         assert wrapper.fail_count == 3
         assert wrapper.available_after > time.time()
-        assert wrapper.available_after <= time.time() + 8
+        assert wrapper.available_after <= time.time() + ClientWrapper.INITIAL_BACKOFF * 4 + 1
 
     def test_mark_failure_max_backoff(self):
-        """Test that backoff is capped at 64 seconds."""
-        from perplexity.client_pool import ClientWrapper
+        """Test that backoff is capped at MAX_BACKOFF (3600 seconds)."""
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
@@ -84,12 +84,12 @@ class TestClientWrapper:
             wrapper.mark_failure()
 
         assert wrapper.fail_count == 10
-        # Backoff should be capped at 64 seconds
-        assert wrapper.available_after <= time.time() + 64
+        # Backoff should be capped at MAX_BACKOFF (3600 seconds)
+        assert wrapper.available_after <= time.time() + ClientWrapper.MAX_BACKOFF + 1
 
     def test_is_available_after_backoff(self):
         """Test that client becomes available after backoff period."""
-        from perplexity.client_pool import ClientWrapper
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
@@ -101,7 +101,7 @@ class TestClientWrapper:
 
     def test_is_not_available_during_backoff(self):
         """Test that client is not available during backoff period."""
-        from perplexity.client_pool import ClientWrapper
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
@@ -113,7 +113,7 @@ class TestClientWrapper:
 
     def test_get_status(self):
         """Test that get_status returns correct status dict."""
-        from perplexity.client_pool import ClientWrapper
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
@@ -129,7 +129,7 @@ class TestClientWrapper:
 
     def test_get_status_during_backoff(self):
         """Test that get_status returns next_available_at during backoff."""
-        from perplexity.client_pool import ClientWrapper
+        from perplexity.server.client_pool import ClientWrapper
 
         mock_client = MagicMock()
         wrapper = ClientWrapper(mock_client, "test-id")
@@ -145,10 +145,11 @@ class TestClientWrapper:
 class TestClientPool:
     """Tests for ClientPool class."""
 
-    @patch("perplexity.client_pool.Client")
-    def test_initialize_anonymous_mode(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_initialize_anonymous_mode(self, mock_client_class, mock_path_exists):
         """Test that pool initializes in anonymous mode when no tokens configured."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         # Clear environment variables
         with patch.dict(os.environ, {}, clear=True):
@@ -158,10 +159,11 @@ class TestClientPool:
         assert len(pool.clients) == 1
         assert "anonymous" in pool.clients
 
-    @patch("perplexity.client_pool.Client")
-    def test_initialize_single_mode(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_initialize_single_mode(self, mock_client_class, mock_path_exists):
         """Test that pool initializes in single mode with env vars."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         env = {
             "PPLX_NEXT_AUTH_CSRF_TOKEN": "test-csrf",
@@ -174,10 +176,10 @@ class TestClientPool:
         assert len(pool.clients) == 1
         assert "default" in pool.clients
 
-    @patch("perplexity.client_pool.Client")
+    @patch("perplexity.server.client_pool.Client")
     def test_initialize_pool_mode_from_config(self, mock_client_class):
         """Test that pool initializes in pool mode from config file."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         config = {
             "tokens": [
@@ -200,10 +202,11 @@ class TestClientPool:
         finally:
             os.unlink(config_path)
 
-    @patch("perplexity.client_pool.Client")
-    def test_add_client(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_add_client(self, mock_client_class, mock_path_exists):
         """Test adding a new client to the pool."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -214,10 +217,11 @@ class TestClientPool:
         assert "new-user" in pool.clients
         assert pool._mode == "pool"  # Mode should change from anonymous to pool
 
-    @patch("perplexity.client_pool.Client")
-    def test_add_duplicate_client(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_add_duplicate_client(self, mock_client_class, mock_path_exists):
         """Test that adding a duplicate client returns an error."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -228,10 +232,11 @@ class TestClientPool:
         assert result["status"] == "error"
         assert "already exists" in result["message"]
 
-    @patch("perplexity.client_pool.Client")
-    def test_remove_client(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_remove_client(self, mock_client_class, mock_path_exists):
         """Test removing a client from the pool."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -245,10 +250,11 @@ class TestClientPool:
         assert "user1" not in pool.clients
         assert "user2" in pool.clients
 
-    @patch("perplexity.client_pool.Client")
-    def test_remove_last_client_error(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_remove_last_client_error(self, mock_client_class, mock_path_exists):
         """Test that removing the last client returns an error."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -258,10 +264,11 @@ class TestClientPool:
         assert result["status"] == "error"
         assert "at least one client must remain" in result["message"].lower()
 
-    @patch("perplexity.client_pool.Client")
-    def test_remove_nonexistent_client(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_remove_nonexistent_client(self, mock_client_class, mock_path_exists):
         """Test that removing a nonexistent client returns an error."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -271,10 +278,11 @@ class TestClientPool:
         assert result["status"] == "error"
         assert "not found" in result["message"]
 
-    @patch("perplexity.client_pool.Client")
-    def test_list_clients(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_list_clients(self, mock_client_class, mock_path_exists):
         """Test listing all clients."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -290,11 +298,11 @@ class TestClientPool:
         assert "user1" in client_ids
         assert "user2" in client_ids
 
-    @patch("perplexity.client_pool.Client")
+    @patch("perplexity.server.client_pool.Client")
     @patch("pathlib.Path.exists", return_value=False)
     def test_get_client_round_robin(self, mock_exists, mock_client_class):
         """Test that get_client uses round-robin selection."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         # Mock exists to prevent loading any config file
         with patch.dict(os.environ, {}, clear=True):
@@ -318,10 +326,11 @@ class TestClientPool:
         unique_ids = set(ids)
         assert len(unique_ids) >= 2, f"Expected round-robin but got: {ids}"
 
-    @patch("perplexity.client_pool.Client")
-    def test_get_client_skips_unavailable(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_get_client_skips_unavailable(self, mock_client_class, mock_path_exists):
         """Test that get_client skips clients in backoff."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -335,10 +344,11 @@ class TestClientPool:
         client_id, client = pool.get_client()
         assert client_id == "user1"
 
-    @patch("perplexity.client_pool.Client")
-    def test_get_client_all_unavailable(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_get_client_all_unavailable(self, mock_client_class, mock_path_exists):
         """Test get_client when all clients are unavailable."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -352,10 +362,11 @@ class TestClientPool:
         assert client_id == "anonymous"
         assert client is None
 
-    @patch("perplexity.client_pool.Client")
-    def test_mark_client_success(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_mark_client_success(self, mock_client_class, mock_path_exists):
         """Test marking a client as successful."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -365,10 +376,11 @@ class TestClientPool:
         assert pool.clients["anonymous"].request_count == 1
         assert pool.clients["anonymous"].fail_count == 0
 
-    @patch("perplexity.client_pool.Client")
-    def test_mark_client_failure(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_mark_client_failure(self, mock_client_class, mock_path_exists):
         """Test marking a client as failed."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -378,10 +390,11 @@ class TestClientPool:
         assert pool.clients["anonymous"].fail_count == 1
         assert pool.clients["anonymous"].is_available() is False
 
-    @patch("perplexity.client_pool.Client")
-    def test_get_status(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_get_status(self, mock_client_class, mock_path_exists):
         """Test getting pool status."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -395,10 +408,11 @@ class TestClientPool:
         assert status["mode"] == "pool"
         assert len(status["clients"]) == 2
 
-    @patch("perplexity.client_pool.Client")
-    def test_get_earliest_available_time(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_get_earliest_available_time(self, mock_client_class, mock_path_exists):
         """Test getting earliest available time when all clients unavailable."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -414,10 +428,11 @@ class TestClientPool:
         assert earliest is not None
         assert "T" in earliest  # ISO8601 format
 
-    @patch("perplexity.client_pool.Client")
-    def test_get_earliest_available_time_when_available(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_get_earliest_available_time_when_available(self, mock_client_class, mock_path_exists):
         """Test that get_earliest_available_time returns None when client available."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -426,10 +441,11 @@ class TestClientPool:
 
         assert earliest is None
 
-    @patch("perplexity.client_pool.Client")
-    def test_thread_safety(self, mock_client_class):
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("perplexity.server.client_pool.Client")
+    def test_thread_safety(self, mock_client_class, mock_path_exists):
         """Test that pool operations are thread-safe."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         with patch.dict(os.environ, {}, clear=True):
             pool = ClientPool()
@@ -467,10 +483,10 @@ class TestClientPool:
 class TestClientPoolConfigValidation:
     """Tests for config file validation."""
 
-    @patch("perplexity.client_pool.Client")
+    @patch("perplexity.server.client_pool.Client")
     def test_invalid_config_missing_tokens(self, mock_client_class):
         """Test that config without tokens raises an error."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         config = {"tokens": []}
 
@@ -484,10 +500,10 @@ class TestClientPoolConfigValidation:
         finally:
             os.unlink(config_path)
 
-    @patch("perplexity.client_pool.Client")
+    @patch("perplexity.server.client_pool.Client")
     def test_invalid_config_missing_fields(self, mock_client_class):
         """Test that config with missing fields raises an error."""
-        from perplexity.client_pool import ClientPool
+        from perplexity.server.client_pool import ClientPool
 
         config = {
             "tokens": [

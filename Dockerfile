@@ -43,4 +43,4 @@ ENV PPLX_TOKEN_POOL_CONFIG=/app/token_pool_config.json
 EXPOSE 8000
 
 # 启动命令
-CMD ["python", "-m", "perplexity.mcp_server", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "perplexity.server"]

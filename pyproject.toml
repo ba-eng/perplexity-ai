@@ -51,7 +51,7 @@ all = [
 ]
 
 [project.scripts]
-perplexity = "perplexity.mcp_server:main"
+perplexity = "perplexity.server.main:main"
 
 [project.urls]
 Homepage = "https://github.com/ESousa97/perplexity-ai"

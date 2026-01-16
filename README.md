@@ -2,6 +2,7 @@
 
 
 ## 更新记录
++ 2026-01-16: 重构项目结构，增加oai 端点适配
 + 2026-01-13: 新增心跳检测功能，支持定时检测token健康状态并通过Telegram通知
 + 2026-01-03: webui控制
 + 2026-01-02：新增多token池支持，支持动态管理号池（列举/新增/删除）
@@ -161,10 +162,107 @@ PPLX_ADMIN_TOKEN=your-admin-token
   }
 }
 ```
+
+## OpenAI 兼容端点
+
+本服务提供 OpenAI 兼容的 API 端点，可直接对接支持 OpenAI API 的客户端（如 ChatBox、OpenCat、Cursor 等）。
+
+### 使用方式
+
+**Base URL:** `http://127.0.0.1:8000/v1`
+
+**认证:** 在请求头中添加 `Authorization: Bearer <MCP_TOKEN>`
+
+#### 获取模型列表
+
+```bash
+curl http://127.0.0.1:8000/v1/models \
+  -H "Authorization: Bearer sk-123456"
+```
+
+#### 聊天补全（非流式）
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer sk-123456" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "perplexity-search",
+    "messages": [{"role": "user", "content": "今天天气怎么样"}],
+    "stream": false
+  }'
+```
+
+#### 聊天补全（流式）
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer sk-123456" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "perplexity-reasoning",
+    "messages": [{"role": "user", "content": "分析一下人工智能的发展趋势"}],
+    "stream": true
+  }'
+```
+
+### 支持的模型
+
+| 模型 ID | 模式 | 说明 |
+|---------|------|------|
+| **Search 模式（Pro）** | | |
+| `perplexity-search` | pro | 默认搜索模型 |
+| `sonar-search` | pro | Sonar 模型 |
+| `gpt-5-2-search` | pro | GPT-5.2 |
+| `claude-4-5-sonnet-search` | pro | Claude 4.5 Sonnet |
+| `grok-4-1-search` | pro | Grok 4.1 |
+| **Reasoning 模式** | | |
+| `perplexity-reasoning` | reasoning | 默认推理模型 |
+| `gpt-5-2-thinking-reasoning` | reasoning | GPT-5.2 Thinking |
+| `claude-4-5-sonnet-thinking-reasoning` | reasoning | Claude 4.5 Sonnet Thinking |
+| `gemini-3-0-pro-reasoning` | reasoning | Gemini 3.0 Pro |
+| `kimi-k2-thinking-reasoning` | reasoning | Kimi K2 Thinking |
+| `grok-4-1-reasoning-reasoning` | reasoning | Grok 4.1 Reasoning |
+| **Deep Research 模式** | | |
+| `perplexity-deepsearch` | deep research | 深度研究模型 |
+
+### 客户端配置示例
+
+以 ChatBox 为例：
+
+1. 打开设置 → AI 模型提供商 → 添加自定义提供商
+2. 填入：
+   - API Host: `http://127.0.0.1:8000`
+   - API Key: `sk-123456`（与 MCP_TOKEN 一致）
+3. 选择模型如 `perplexity-search` 或 `perplexity-reasoning`
+
+## 项目结构
+
+```
+perplexity/
+├── server/                  # MCP 服务器模块
+│   ├── __init__.py          # 包入口，导出主要组件
+│   ├── main.py              # 服务启动入口
+│   ├── app.py               # FastMCP 应用实例、认证中间件、核心查询逻辑
+│   ├── mcp.py               # MCP 工具定义 (list_models, search, research)
+│   ├── oai.py               # OpenAI 兼容 API (/v1/models, /v1/chat/completions)
+│   ├── admin.py             # 管理端点 (健康检查、号池管理、心跳控制)
+│   ├── utils.py             # 服务器专用工具函数 (验证、OAI模型映射)
+│   ├── client_pool.py       # 多账户连接池管理
+│   └── web/
+│       └── admin.html       # 号池管理 Web UI
+├── client.py                # Perplexity API 客户端
+├── config.py                # 配置常量
+├── exceptions.py            # 自定义异常
+├── logger.py                # 日志配置
+└── utils.py                 # 通用工具函数 (重试、限流、JSON解析)
+```
+
 ## 注册为 Claude Code 指令
 
 复制 `.claude/commands/pp/` 目录下创建指令文件：
 
 使用方式：
 - `/pp:query 你的问题` - 快速搜索
-- `/pp:research 你的问题` - 深度研究
+- `/pp:reasoning 你的问题` - 推理模式，多步思考分析
+- `/pp:research 你的问题` - 深度研究，最全面彻底

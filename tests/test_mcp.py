@@ -6,7 +6,7 @@
 3. research 模式下前三个模型的正确处理
 
 使用 fastmcp 客户端连接 MCP 服务器。
-从 .env 文件读取 cookie 配置。
+从 token_pool_config.json 或 .env 文件读取 cookie 配置。
 """
 
 import asyncio
@@ -29,7 +29,7 @@ MCP_BASE_URL = "http://127.0.0.1:8000/mcp"
 MCP_TOKEN = os.getenv("MCP_TOKEN", "sk-123456")
 
 # 超时配置（秒）
-CALL_TOOL_TIMEOUT = 30
+CALL_TOOL_TIMEOUT = 120
 
 # 测试问题
 SEARCH_QUESTION = "When is the upcoming Chinese New Year"
@@ -62,7 +62,29 @@ def parse_tool_result(result: Any) -> Dict[str, Any]:
 
 
 def has_valid_cookies() -> bool:
-    """检查是否配置了有效的 Perplexity cookies。"""
+    """检查是否配置了有效的 Perplexity cookies。
+
+    优先从 token_pool_config.json 读取，其次从环境变量读取。
+    """
+    # 优先检查 token_pool_config.json
+    config_paths = [
+        Path(__file__).parent.parent / "token_pool_config.json",
+        Path.cwd() / "token_pool_config.json",
+    ]
+    for config_path in config_paths:
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                tokens = config.get("tokens", [])
+                if tokens and len(tokens) > 0:
+                    first_token = tokens[0]
+                    if first_token.get("csrf_token") and first_token.get("session_token"):
+                        return True
+            except (json.JSONDecodeError, IOError):
+                pass
+
+    # 回退到环境变量
     csrf_token = os.getenv("PPLX_NEXT_AUTH_CSRF_TOKEN")
     session_token = os.getenv("PPLX_SESSION_TOKEN")
     return bool(csrf_token and session_token)

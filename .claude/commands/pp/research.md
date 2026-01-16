@@ -1,24 +1,25 @@
 ---
-name: PP: Research
-description: Deep research for complex analysis and comprehensive investigation.
+name: PP: Deep Research
+description: Deep research mode for the most comprehensive investigation.
 category: Perplexity
-tags: [perplexity, research, deep, analysis]
+tags: [perplexity, research, deep, comprehensive]
 argument-hint: [query]
 ---
 
 **Overview**
-Use Perplexity deep research for complex problem analysis and comprehensive investigation.
+Use Perplexity deep research mode for the most comprehensive and thorough investigation.
 
 **Features**
-- Uses reasoning models with multi-step thinking
-- More comprehensive and accurate results
-- Suitable for complex analysis, academic research, and in-depth investigation
-- Takes longer but provides thorough answers
+- Most comprehensive research mode
+- Extensively explores multiple sources and perspectives
+- Takes longer but provides the most thorough answers
+- Best for academic research, market analysis, and complex investigations
 
 **Steps**
-1. Use `mcp__perplexity__research` tool with the user's query.
-2. Set `language: "zh-CN"` for Chinese responses.
-3. Keep relative context as part of the answer.
-4. Present the results with detailed analysis and sources.
+1. Use `mcp__perplexity-mcp__research` tool with the user's query.
+2. Set `mode: "deep research"` explicitly.
+3. Do NOT set `model` parameter (deep research mode does not accept model).
+4. Set `language: "zh-CN"` for Chinese responses.
+5. Present the results with detailed analysis and sources.
 
 **Query**: $ARGUMENTS
