@@ -1,3 +1,6 @@
+## 源项目地址：
+https://github.com/helallao/perplexity-ai
+
 <img width="1751" height="900" alt="image" src="https://github.com/user-attachments/assets/baa6d6e0-1752-42e6-9eda-29930f8b9947" />
 
 
