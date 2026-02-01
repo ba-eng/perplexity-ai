@@ -8,8 +8,13 @@ interface StatsGridProps {
 }
 
 export function StatsGrid({ data, hbConfig }: StatsGridProps) {
-  const enabledCount = useMemo(
-    () => (data.clients || []).filter((c) => c.enabled).length,
+  const proCount = useMemo(
+    () => (data.clients || []).filter((c) => c.state === 'normal').length,
+    [data.clients]
+  )
+
+  const downgradeCount = useMemo(
+    () => (data.clients || []).filter((c) => c.state === 'downgrade').length,
     [data.clients]
   )
 
@@ -31,15 +36,15 @@ export function StatsGrid({ data, hbConfig }: StatsGridProps) {
       />
       <BrutalistCard
         number="02"
-        label="Available"
-        value={data.available || 0}
-        colorClass="text-neon-blue"
+        label="Pro"
+        value={proCount}
+        colorClass="text-green-400"
       />
       <BrutalistCard
         number="03"
-        label="Enabled"
-        value={enabledCount}
-        colorClass="text-neon-pink"
+        label="Downgrade"
+        value={downgradeCount}
+        colorClass="text-yellow-400"
       />
       <BrutalistCard
         number="04"

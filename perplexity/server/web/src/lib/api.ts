@@ -27,9 +27,14 @@ export interface HeartbeatConfig {
   tg_chat_id: string | null
 }
 
+export interface FallbackConfig {
+  fallback_to_auto: boolean
+}
+
 export interface ApiResponse<T = unknown> {
   status: 'ok' | 'error'
   message?: string
+  error?: string
   data?: T
   config?: T
 }
@@ -39,8 +44,37 @@ export async function fetchPoolStatus(): Promise<PoolStatus> {
   return resp.json()
 }
 
+export async function verifyAdminToken(token: string): Promise<boolean> {
+  const resp = await fetch(`${API_BASE}/logs/tail?lines=1`, {
+    headers: {
+      'X-Admin-Token': token,
+    },
+  })
+  return resp.ok
+}
+
 export async function fetchHeartbeatConfig(): Promise<ApiResponse<HeartbeatConfig>> {
   const resp = await fetch(`${API_BASE}/heartbeat/config`)
+  return resp.json()
+}
+
+export async function fetchFallbackConfig(): Promise<ApiResponse<FallbackConfig>> {
+  const resp = await fetch(`${API_BASE}/fallback/config`)
+  return resp.json()
+}
+
+export async function updateFallbackConfig(
+  config: Partial<FallbackConfig>,
+  adminToken: string
+): Promise<ApiResponse<FallbackConfig>> {
+  const resp = await fetch(`${API_BASE}/fallback/config`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Token': adminToken,
+    },
+    body: JSON.stringify(config),
+  })
   return resp.json()
 }
 
@@ -77,6 +111,28 @@ export async function updateHeartbeatConfig(
       'X-Admin-Token': adminToken,
     },
     body: JSON.stringify(config),
+  })
+  return resp.json()
+}
+
+// ============ Logs API ============
+
+export interface LogsResponse {
+  status: 'ok' | 'error'
+  message?: string
+  lines?: string[]
+  total_lines?: number
+  file_size?: number
+}
+
+export async function fetchLogs(
+  adminToken: string,
+  lines: number = 100
+): Promise<LogsResponse> {
+  const resp = await fetch(`${API_BASE}/logs/tail?lines=${lines}`, {
+    headers: {
+      'X-Admin-Token': adminToken,
+    },
   })
   return resp.json()
 }

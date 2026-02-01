@@ -87,21 +87,6 @@ export function HeartbeatPanel({
           >
             {isConfigOpen ? 'Hide Config' : 'Config'}
           </button>
-          {hbConfig.enable ? (
-            <button
-              onClick={() => handleHeartbeatAction('stop')}
-              className="px-3 py-1 border border-red-500 text-red-500 hover:bg-red-500 hover:text-white font-mono text-xs uppercase transition-colors"
-            >
-              Stop Task
-            </button>
-          ) : (
-            <button
-              onClick={() => handleHeartbeatAction('start')}
-              className="px-3 py-1 border border-green-500 text-green-500 hover:bg-green-500 hover:text-white font-mono text-xs uppercase transition-colors"
-            >
-              Start Task
-            </button>
-          )}
           <button
             onClick={() => handleHeartbeatAction('test')}
             disabled={isGlobalTesting}

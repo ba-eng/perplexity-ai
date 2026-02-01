@@ -1,26 +1,31 @@
 import { useState } from 'react'
-import { ClientInfo, apiCall } from 'lib/api'
+import { ClientInfo, apiCall, updateFallbackConfig } from 'lib/api'
 
 interface TokenTableProps {
   clients: ClientInfo[]
   adminToken: string
   isAuthenticated: boolean
+  fallbackToAuto: boolean
   onToast: (message: string, type: 'success' | 'error') => void
   onRefresh: () => void
   onAddClick: () => void
   onConfirmDelete: (id: string) => void
+  onFallbackChange: (enabled: boolean) => void
 }
 
 export function TokenTable({
   clients,
   adminToken,
   isAuthenticated,
+  fallbackToAuto,
   onToast,
   onRefresh,
   onAddClick,
   onConfirmDelete,
+  onFallbackChange,
 }: TokenTableProps) {
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
+  const [updatingFallback, setUpdatingFallback] = useState(false)
 
   const getWeightColor = (weight: number) => {
     if (weight >= 70) return 'bg-acid'
@@ -69,7 +74,7 @@ export function TokenTable({
         onToast(`TEST_${id}_OK`, 'success')
         onRefresh()
       } else {
-        onToast(resp.message || 'TEST_FAILED', 'error')
+        onToast(resp.error || resp.message || 'TEST_FAILED', 'error')
       }
     } finally {
       setTestingIds((prev) => {
@@ -77,6 +82,27 @@ export function TokenTable({
         next.delete(id)
         return next
       })
+    }
+  }
+
+  const handleToggleFallback = async () => {
+    if (!isAuthenticated) {
+      onToast('AUTH_REQUIRED', 'error')
+      return
+    }
+
+    setUpdatingFallback(true)
+    try {
+      const newValue = !fallbackToAuto
+      const resp = await updateFallbackConfig({ fallback_to_auto: newValue }, adminToken)
+      if (resp.status === 'ok') {
+        onFallbackChange(newValue)
+        onToast(newValue ? 'DOWNGRADE_SEARCH_ENABLED' : 'DOWNGRADE_SEARCH_DISABLED', 'success')
+      } else {
+        onToast(resp.message || 'ERROR', 'error')
+      }
+    } finally {
+      setUpdatingFallback(false)
     }
   }
 
@@ -88,22 +114,50 @@ export function TokenTable({
             <span className="w-3 h-3 bg-acid block animate-pulse"></span>
             Active Tokens
           </h2>
-          <button
-            onClick={() => {
-              if (!isAuthenticated) {
-                onToast('AUTH_REQUIRED', 'error')
-                return
-              }
-              onAddClick()
-            }}
-            className={`px-4 py-2 font-bold border transition-all font-mono text-sm uppercase shadow-hard-acid hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] ${
-              isAuthenticated
-                ? 'bg-neon-pink text-black border-neon-pink hover:bg-white'
-                : 'bg-gray-700 text-gray-500 border-gray-600 cursor-not-allowed'
-            }`}
-          >
-            + NEW TOKEN
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={handleToggleFallback}
+              disabled={!isAuthenticated || updatingFallback}
+              className={`px-4 py-2 font-bold border-2 transition-all font-mono text-sm uppercase flex items-center gap-2 ${
+                !isAuthenticated || updatingFallback
+                  ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                  : fallbackToAuto
+                    ? 'bg-orange-900/30 text-orange-400 border-orange-500 hover:bg-orange-500 hover:text-black'
+                    : 'bg-green-900/30 text-green-400 border-green-500 hover:bg-green-500 hover:text-black'
+              }`}
+            >
+              <svg
+                className={`w-4 h-4 transition-transform ${fallbackToAuto ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                />
+              </svg>
+              {updatingFallback ? 'UPDATING...' : fallbackToAuto ? 'DOWNGRADE REQ MODE' : 'PRO ONLY MODE'}
+            </button>
+            <button
+              onClick={() => {
+                if (!isAuthenticated) {
+                  onToast('AUTH_REQUIRED', 'error')
+                  return
+                }
+                onAddClick()
+              }}
+              className={`px-4 py-2 font-bold border transition-all font-mono text-sm uppercase shadow-hard-acid hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px] ${
+                isAuthenticated
+                  ? 'bg-neon-pink text-black border-neon-pink hover:bg-white'
+                  : 'bg-gray-700 text-gray-500 border-gray-600 cursor-not-allowed'
+              }`}
+            >
+              + NEW TOKEN
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -136,10 +190,16 @@ export function TokenTable({
                 </tr>
               </thead>
               <tbody className="font-mono text-sm">
-                {clients.map((c) => (
+                {clients.map((c) => {
+                const isDisabledInProOnlyMode = !fallbackToAuto && c.state === 'downgrade'
+                return (
                   <tr
                     key={c.id}
-                    className="border-b border-gray-800 hover:bg-gray-900/50 transition-colors group"
+                    className={`border-b border-gray-800 transition-colors group ${
+                      isDisabledInProOnlyMode
+                        ? 'opacity-40 bg-gray-900/30'
+                        : 'hover:bg-gray-900/50'
+                    }`}
                   >
                     <td className="p-4 font-bold text-white">
                       <span className="text-neon-blue mr-2">&gt;</span>
@@ -158,9 +218,13 @@ export function TokenTable({
                         <span className="px-2 py-1 bg-red-900/30 text-red-400 text-xs border border-red-900">
                           OFFLINE
                         </span>
+                      ) : c.state === 'downgrade' ? (
+                        <span className="px-2 py-1 bg-orange-900/30 text-orange-400 text-xs border border-orange-900">
+                          DOWNGRADE
+                        </span>
                       ) : c.state === 'normal' ? (
                         <span className="px-2 py-1 bg-green-900/30 text-green-400 text-xs border border-green-900">
-                          HEALTHY
+                          PRO
                         </span>
                       ) : (
                         <span className="px-2 py-1 bg-blue-900/30 text-blue-400 text-xs border border-blue-900">
@@ -242,7 +306,8 @@ export function TokenTable({
                       </div>
                     </td>
                   </tr>
-                ))}
+                )
+                })}
               </tbody>
             </table>
           )}

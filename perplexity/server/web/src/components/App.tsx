@@ -10,12 +10,16 @@ import { TokenTable } from './TokenTable'
 import { AddTokenModal } from './AddTokenModal'
 import { ConfirmModal } from './ConfirmModal'
 import { Toast } from './ui/Toast'
+import { LogsPanel } from './logs/LogsPanel'
+
+type TabType = 'pool' | 'logs'
 
 export function App() {
   const { adminToken, isAuthenticated, login, logout } = useAuth()
   const { toasts, addToast, removeToast } = useToast()
-  const { data, hbConfig, setHbConfig, lastSync, refreshData } = usePool()
+  const { data, hbConfig, setHbConfig, fallbackConfig, setFallbackConfig, lastSync, refreshData } = usePool()
 
+  const [activeTab, setActiveTab] = useState<TabType>('pool')
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false)
   const [confirmMessage, setConfirmMessage] = useState('')
@@ -126,33 +130,70 @@ export function App() {
           isAuthenticated={isAuthenticated}
           onLogin={login}
           onLogout={handleLogout}
+          onAuthError={(msg) => addToast(msg, 'error')}
         />
 
-        {/* Stats Grid */}
-        <StatsGrid data={data} hbConfig={hbConfig} />
-
-        {/* Heartbeat Controls */}
-        {isAuthenticated && hbConfig && (
-          <HeartbeatPanel
-            hbConfig={hbConfig}
-            adminToken={adminToken}
-            isAuthenticated={isAuthenticated}
-            onConfigUpdate={setHbConfig}
-            onToast={addToast}
-            onRefresh={refreshData}
-          />
+        {/* Tab Navigation - Only show Logs tab when authenticated */}
+        {isAuthenticated && (
+          <div className="mb-6 flex gap-2">
+            <button
+              onClick={() => setActiveTab('pool')}
+              className={`border-2 px-4 py-2 font-mono uppercase transition-colors ${
+                activeTab === 'pool'
+                  ? 'border-acid bg-acid/10 text-acid'
+                  : 'border-gray-600 text-gray-400 hover:border-gray-400'
+              }`}
+            >
+              Token Pool
+            </button>
+            <button
+              onClick={() => setActiveTab('logs')}
+              className={`border-2 px-4 py-2 font-mono uppercase transition-colors ${
+                activeTab === 'logs'
+                  ? 'border-acid bg-acid/10 text-acid'
+                  : 'border-gray-600 text-gray-400 hover:border-gray-400'
+              }`}
+            >
+              Logs
+            </button>
+          </div>
         )}
 
-        {/* Token Table */}
-        <TokenTable
-          clients={data.clients}
-          adminToken={adminToken}
-          isAuthenticated={isAuthenticated}
-          onToast={addToast}
-          onRefresh={refreshData}
-          onAddClick={() => setIsAddModalOpen(true)}
-          onConfirmDelete={confirmDelete}
-        />
+        {/* Tab Content */}
+        {activeTab === 'pool' ? (
+          <>
+            {/* Stats Grid */}
+            <StatsGrid data={data} hbConfig={hbConfig} />
+
+            {/* Heartbeat Controls */}
+            {isAuthenticated && hbConfig && (
+              <HeartbeatPanel
+                hbConfig={hbConfig}
+                adminToken={adminToken}
+                isAuthenticated={isAuthenticated}
+                onConfigUpdate={setHbConfig}
+                onToast={addToast}
+                onRefresh={refreshData}
+              />
+            )}
+
+            {/* Token Table */}
+            <TokenTable
+              clients={data.clients}
+              adminToken={adminToken}
+              isAuthenticated={isAuthenticated}
+              fallbackToAuto={fallbackConfig.fallback_to_auto}
+              onToast={addToast}
+              onRefresh={refreshData}
+              onAddClick={() => setIsAddModalOpen(true)}
+              onConfirmDelete={confirmDelete}
+              onFallbackChange={(enabled) => setFallbackConfig({ fallback_to_auto: enabled })}
+            />
+          </>
+        ) : (
+          /* Logs Panel */
+          <LogsPanel adminToken={adminToken} />
+        )}
 
         {/* Add Token Modal */}
         <AddTokenModal
