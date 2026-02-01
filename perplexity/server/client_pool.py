@@ -7,7 +7,6 @@ Supports heartbeat testing to automatically verify token health.
 
 import asyncio
 import json
-import logging
 import pathlib
 import os
 import threading
@@ -16,8 +15,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..client import Client
+from ..logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("server.client_pool")
 
 
 class ClientWrapper:
@@ -42,7 +42,7 @@ class ClientWrapper:
         self.weight = self.DEFAULT_WEIGHT  # Higher weight = higher priority
         self.pro_fail_count = 0  # Track pro-specific failures
         self.enabled = True  # Whether this client is enabled for use
-        self.state = "unknown"  # Token state: "normal", "offline", "unknown"
+        self.state = "unknown"  # Token state: "normal", "offline", "downgrade", "unknown"
         self.last_heartbeat: Optional[float] = None  # Last heartbeat check timestamp
 
     def is_available(self) -> bool:
@@ -131,6 +131,10 @@ class ClientPool:
             "tg_bot_token": None,
             "tg_chat_id": None
         }
+        # Fallback configuration
+        self._fallback_config: Dict[str, Any] = {
+            "fallback_to_auto": True  # Enable fallback to anonymous auto mode by default
+        }
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._config_path: Optional[str] = None
 
@@ -191,6 +195,13 @@ class ClientPool:
                 "interval": heart_beat.get("interval", 6),
                 "tg_bot_token": heart_beat.get("tg_bot_token"),
                 "tg_chat_id": heart_beat.get("tg_chat_id")
+            }
+
+        # Load fallback configuration if present
+        fallback = config.get("fallback")
+        if fallback and isinstance(fallback, dict):
+            self._fallback_config = {
+                "fallback_to_auto": fallback.get("fallback_to_auto", True)
             }
 
         tokens = config.get("tokens", [])
@@ -547,6 +558,51 @@ class ClientPool:
         """Check if heartbeat is enabled."""
         return self._heartbeat_config.get("enable", False)
 
+    # ==================== Fallback Methods ====================
+
+    def get_fallback_config(self) -> Dict[str, Any]:
+        """Get the current fallback configuration."""
+        return self._fallback_config.copy()
+
+    def is_fallback_to_auto_enabled(self) -> bool:
+        """Check if fallback to auto mode is enabled."""
+        return self._fallback_config.get("fallback_to_auto", True)
+
+    def update_fallback_config(self, new_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update fallback configuration and save to config file.
+
+        Args:
+            new_config: Dict with configuration fields to update
+
+        Returns:
+            Dict with status and updated config
+        """
+        # Update in-memory config
+        if "fallback_to_auto" in new_config:
+            self._fallback_config["fallback_to_auto"] = new_config["fallback_to_auto"]
+
+        # Save to config file if available
+        if self._config_path and os.path.exists(self._config_path):
+            try:
+                with open(self._config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+
+                # Update fallback section
+                config["fallback"] = {
+                    "fallback_to_auto": self._fallback_config["fallback_to_auto"]
+                }
+
+                with open(self._config_path, "w", encoding="utf-8") as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+
+                logger.info(f"Fallback config saved to {self._config_path}")
+            except Exception as e:
+                logger.error(f"Failed to save fallback config: {e}")
+                return {"status": "error", "message": f"Failed to save config: {e}"}
+
+        return {"status": "ok", "config": self._fallback_config.copy()}
+
     async def _send_telegram_notification(self, message: str) -> None:
         """Send a notification to Telegram."""
         bot_token = self._heartbeat_config.get("tg_bot_token")
@@ -592,31 +648,91 @@ class ClientPool:
         prev_state = wrapper.state
 
         try:
-            # Perform a simple search query
-            response = await asyncio.to_thread(
-                client.search,
-                question,
-                mode="auto",
-                model=None,
-                sources=["web"],
-                files={},
-                stream=False,
-                language="zh-CN",
-                incognito=True,
-            )
+            # First, verify the user session is valid (logged in)
+            user_info = await asyncio.to_thread(client.get_user_info)
+            is_logged_in = user_info and user_info.get("user")
 
-            # Check if response contains answer
-            if response and "answer" in response:
-                with self._lock:
-                    wrapper.state = "normal"
-                    wrapper.last_heartbeat = time.time()
-                logger.info(f"Heartbeat test passed for client '{client_id}'")
-                return {"status": "ok", "state": "normal", "client_id": client_id}
+            pro_success = False
+            pro_error = None
+
+            if is_logged_in:
+                # Perform a Pro mode search query to verify Pro account status
+                # Using mode="pro" ensures we're testing actual Pro capabilities,
+                # not just basic anonymous access
+                try:
+                    response = await asyncio.to_thread(
+                        client.search,
+                        question,
+                        mode="pro",
+                        model=None,
+                        sources=["web"],
+                        files={},
+                        stream=False,
+                        language="zh-CN",
+                        incognito=True,
+                    )
+                    if response and "answer" in response:
+                        pro_success = True
+                except Exception as e:
+                    pro_error = e
+                    logger.warning(f"Pro mode test failed for client '{client_id}': {e}")
+
+                # Check if response contains answer (Pro mode success)
+                if pro_success:
+                    with self._lock:
+                        wrapper.state = "normal"
+                        wrapper.last_heartbeat = time.time()
+                    logger.info(f"Heartbeat test passed for client '{client_id}'")
+                    return {"status": "ok", "state": "normal", "client_id": client_id}
+
+                # Pro mode failed, try auto mode to check for downgrade
+                logger.info(f"Pro mode failed for client '{client_id}', testing auto mode...")
             else:
+                # Not logged in, skip pro mode and test auto mode directly
+                logger.info(f"Client '{client_id}' not logged in, testing auto mode directly...")
+
+            # Test auto mode
+            auto_success = False
+            try:
+                auto_response = await asyncio.to_thread(
+                    client.search,
+                    question,
+                    mode="auto",
+                    model=None,
+                    sources=["web"],
+                    files={},
+                    stream=False,
+                    language="zh-CN",
+                    incognito=True,
+                )
+                if auto_response and "answer" in auto_response:
+                    auto_success = True
+            except Exception as e:
+                logger.warning(f"Auto mode test failed for client '{client_id}': {e}")
+
+            if auto_success:
+                # Pro failed (or not tested) but auto succeeded - account is downgraded
+                with self._lock:
+                    wrapper.state = "downgrade"
+                    wrapper.last_heartbeat = time.time()
+                if is_logged_in:
+                    logger.warning(f"Client '{client_id}' is downgraded (pro failed, auto succeeded)")
+                else:
+                    logger.warning(f"Client '{client_id}' is downgraded (not logged in, auto succeeded)")
+
+                # Send Telegram notification if state changed to downgrade
+                if prev_state != "downgrade":
+                    await self._send_telegram_notification(
+                        f"⚠️ perplexity mcp: <b>{client_id}</b> downgraded (pro failed, auto works)."
+                    )
+
+                return {"status": "ok", "state": "downgrade", "client_id": client_id}
+            else:
+                # Both pro and auto failed - account is offline
                 with self._lock:
                     wrapper.state = "offline"
                     wrapper.last_heartbeat = time.time()
-                logger.warning(f"Heartbeat test failed for client '{client_id}': no answer in response")
+                logger.warning(f"Heartbeat test failed for client '{client_id}': both pro and auto modes failed")
 
                 # Send Telegram notification if state changed to offline
                 if prev_state != "offline":
@@ -624,7 +740,8 @@ class ClientPool:
                         f"⚠️ perplexity mcp: <b>{client_id}</b> test failed."
                     )
 
-                return {"status": "error", "state": "offline", "client_id": client_id}
+                error_msg = str(pro_error) if pro_error else "no answer in response"
+                return {"status": "error", "state": "offline", "client_id": client_id, "error": error_msg}
 
         except Exception as e:
             with self._lock:

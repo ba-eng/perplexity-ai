@@ -5,11 +5,8 @@ import time
 import pytest
 
 from perplexity.exceptions import ValidationError
-from perplexity.utils import (
-    retry_with_backoff,
-    sanitize_query,
-    validate_search_params,
-)
+from perplexity.utils import retry_with_backoff
+from perplexity.server.utils import sanitize_query, validate_search_params
 
 
 def test_sanitize_query_trims_and_validates() -> None:

@@ -10,6 +10,7 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_http_headers
 
 from .client_pool import ClientPool
+from ..client import Client
 from ..config import SEARCH_LANGUAGES
 from ..exceptions import ValidationError
 
@@ -127,20 +128,23 @@ def run_query(
     language: str = "en-US",
     incognito: bool = False,
     files: Optional[Union[Dict[str, Any], Iterable[str]]] = None,
+    fallback_to_auto: bool = True,
 ) -> Dict[str, Any]:
-    """Execute a Perplexity query (non-streaming) and return the final response."""
+    """
+    Execute a Perplexity query with client pool rotation and optional fallback.
+
+    Features:
+    - Rotates through all available clients in the pool on failure
+    - No per-client retry - fails fast and moves to next client
+    - Falls back to anonymous auto mode if all clients fail (when enabled)
+    - Validates query and files once before execution
+
+    Args:
+        fallback_to_auto: If True, attempt anonymous auto mode search when all clients fail
+    """
     pool = get_pool()
-    client_id, client = pool.get_client()
 
-    if client is None:
-        # All clients are in backoff
-        earliest = pool.get_earliest_available_time()
-        return {
-            "status": "error",
-            "error_type": "NoAvailableClients",
-            "message": f"All clients are currently unavailable. Earliest available at: {earliest}",
-        }
-
+    # --- 1. Stateless Validation ---
     try:
         clean_query = sanitize_query(query)
         chosen_sources = sources or ["web"]
@@ -152,48 +156,133 @@ def run_query(
                 f"Invalid language '{language}'. Choose from: {valid_langs}"
             )
 
-        validate_search_params(mode, model, chosen_sources, own_account=client.own)
         normalized_files = normalize_files(files)
-        validate_query_limits(client.copilot, client.file_upload, mode, len(normalized_files))
-
-        response = client.search(
-            clean_query,
-            mode=mode,
-            model=model,
-            sources=chosen_sources,
-            files=normalized_files,
-            stream=False,
-            language=language,
-            incognito=incognito,
-        )
-
-        # Mark success
-        pool.mark_client_success(client_id)
-
-        # 只返回精简的最终结果
-        clean_result = extract_clean_result(response)
-        return {"status": "ok", "data": clean_result}
     except ValidationError as exc:
-        # Pro mode specific failures (like quota exhausted) - reduce weight
-        if mode == "pro" and "pro" in str(exc).lower():
-            pool.mark_client_pro_failure(client_id)
-        else:
-            pool.mark_client_failure(client_id)
         return {
             "status": "error",
-            "error_type": exc.__class__.__name__,
+            "error_type": "ValidationError",
             "message": str(exc),
         }
-    except Exception as exc:
-        # Check if it's a pro-related failure
-        error_msg = str(exc).lower()
-        if mode == "pro" and any(kw in error_msg for kw in ["pro", "quota", "limit", "remaining"]):
-            pool.mark_client_pro_failure(client_id)
-        else:
-            # Mark general failure for exponential backoff
-            pool.mark_client_failure(client_id)
-        return {
-            "status": "error",
-            "error_type": exc.__class__.__name__,
-            "message": str(exc),
-        }
+
+    # --- 2. Client Pool Rotation ---
+    # Try each available client once, no per-client retry
+    attempted_clients = set()
+    last_error = None
+    total_clients = len(pool.clients)
+
+    # Try up to total_clients times to ensure we attempt all available clients
+    for _ in range(total_clients):
+        client_id, client = pool.get_client()
+
+        if client is None:
+            # All clients are in backoff or none exist
+            if not attempted_clients:
+                earliest = pool.get_earliest_available_time()
+                # Don't return error yet - try fallback first
+                last_error = Exception(f"All clients are currently unavailable. Earliest available at: {earliest}")
+            break  # Stop trying if no clients are available
+
+        if client_id in attempted_clients:
+            # Already tried this client, skip to avoid infinite loop
+            continue
+
+        attempted_clients.add(client_id)
+
+        try:
+            # Stateful Validation (Depends on client properties)
+            validate_search_params(mode, model, chosen_sources, own_account=client.own)
+            validate_query_limits(client.copilot, client.file_upload, mode, len(normalized_files))
+
+            response = client.search(
+                clean_query,
+                mode=mode,
+                model=model,
+                sources=chosen_sources,
+                files=normalized_files,
+                stream=False,
+                language=language,
+                incognito=incognito,
+            )
+
+            # Success
+            pool.mark_client_success(client_id)
+            clean_result = extract_clean_result(response)
+            return {"status": "ok", "data": clean_result}
+
+        except ValidationError as exc:
+            last_error = exc
+            error_msg = str(exc).lower()
+            # Heuristic: Is this a client-specific limitation or user error?
+            is_client_limit = any(kw in error_msg for kw in ["pro", "limit", "account", "upload", "quota", "remaining"])
+
+            if is_client_limit:
+                # Client-specific limitation - mark failure and try next client
+                if mode == "pro":
+                    pool.mark_client_pro_failure(client_id)
+                else:
+                    pool.mark_client_failure(client_id)
+                # Continue to next client
+                continue
+            else:
+                # User input error (e.g. "Invalid model", "Invalid sources") - do not failover
+                return {
+                    "status": "error",
+                    "error_type": "ValidationError",
+                    "message": str(exc),
+                }
+
+        except Exception as exc:
+            last_error = exc
+            error_msg = str(exc).lower()
+
+            # Check if it's a pro-related failure
+            if mode == "pro" and any(kw in error_msg for kw in ["pro", "quota", "limit", "remaining"]):
+                pool.mark_client_pro_failure(client_id)
+            else:
+                # General failure - mark and continue to next client
+                pool.mark_client_failure(client_id)
+            # Continue to next client
+            continue
+
+    # --- 3. Fallback to Anonymous Auto Mode ---
+    # Use config setting if fallback_to_auto parameter is not explicitly set (True by default)
+    # Check pool's fallback config for the actual setting
+    should_fallback = fallback_to_auto and pool.is_fallback_to_auto_enabled()
+    if should_fallback and mode != "auto":
+        try:
+            from ..logger import get_logger
+            logger = get_logger("server.app")
+            logger.info("All clients failed, attempting fallback to anonymous auto mode...")
+
+            # Create anonymous client (no cookies)
+            anonymous_client = Client({})
+            response = anonymous_client.search(
+                clean_query,
+                mode="auto",
+                model=None,  # auto mode doesn't support model selection
+                sources=chosen_sources,
+                files={},  # auto mode doesn't support file upload
+                stream=False,
+                language=language,
+                incognito=True,
+            )
+
+            if response and "answer" in response:
+                logger.info("Fallback to anonymous auto mode succeeded")
+                clean_result = extract_clean_result(response)
+                clean_result["fallback"] = True  # Mark as fallback result
+                clean_result["fallback_mode"] = "auto"
+                return {"status": "ok", "data": clean_result}
+            else:
+                logger.warning("Fallback to anonymous auto mode failed: no answer in response")
+        except Exception as fallback_exc:
+            from ..logger import get_logger
+            logger = get_logger("server.app")
+            logger.warning(f"Fallback to anonymous auto mode failed: {fallback_exc}")
+
+    # --- 4. Final Error Handling ---
+    return {
+        "status": "error",
+        "error_type": last_error.__class__.__name__ if last_error else "RequestFailed",
+        "message": str(last_error) if last_error else "Request failed after multiple attempts.",
+    }

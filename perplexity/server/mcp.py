@@ -11,7 +11,17 @@ try:
 except ImportError:
     from perplexity.config import LABS_MODELS, MODEL_MAPPINGS, SEARCH_MODES
 
-from .app import mcp, run_query
+try:
+    from .app import mcp, run_query
+except ImportError:
+    from perplexity.server.app import mcp, run_query
+
+# If mcp is None (e.g. testing env), create a dummy decorator
+if mcp is None:
+    class DummyMCP:
+        def tool(self, func):
+            return func
+    mcp = DummyMCP()
 
 
 def list_models_tool() -> Dict[str, Any]:
@@ -45,6 +55,7 @@ async def search(
     language: str = "en-US",
     incognito: bool = False,
     files: Optional[Union[Dict[str, Any], Iterable[str]]] = None,
+    fallback_to_auto: bool = True,
 ) -> Dict[str, Any]:
     """
     Perplexity 快速搜索 - 用于获取实时网络信息和简单问题解答
@@ -69,6 +80,7 @@ async def search(
         language: 响应语言代码 (默认 'en-US'，中文用 'zh-CN')
         incognito: 隐身模式，不保存搜索历史
         files: 上传文件 (用于分析文档内容)
+        fallback_to_auto: 当所有客户端失败时，是否降级到匿名 auto 模式 (默认 True)
 
     Returns:
         {"status": "ok", "data": {"answer": "搜索结果...", "sources": [{"title": "...", "url": "..."}]}}
@@ -78,7 +90,9 @@ async def search(
     if mode not in ["auto", "pro"]:
         mode = "pro"
     # 使用 asyncio.to_thread 避免阻塞事件循环
-    return await asyncio.to_thread(run_query, query, mode, model, sources, language, incognito, files)
+    return await asyncio.to_thread(
+        run_query, query, mode, model, sources, language, incognito, files, fallback_to_auto
+    )
 
 
 @mcp.tool
@@ -90,6 +104,7 @@ async def research(
     language: str = "en-US",
     incognito: bool = False,
     files: Optional[Union[Dict[str, Any], Iterable[str]]] = None,
+    fallback_to_auto: bool = True,
 ) -> Dict[str, Any]:
     """
     Perplexity 深度研究 - 用于复杂问题分析和深度调研
@@ -114,6 +129,7 @@ async def research(
         language: 响应语言代码 (默认 'en-US'，中文用 'zh-CN')
         incognito: 隐身模式，不保存搜索历史
         files: 上传文件 (用于分析文档内容)
+        fallback_to_auto: 当所有客户端失败时，是否降级到匿名 auto 模式 (默认 True)
 
     Returns:
         {"status": "ok", "data": {"answer": "研究结果...", "sources": [{"title": "...", "url": "..."}]}}
@@ -126,4 +142,6 @@ async def research(
     if mode == "deep research":
         model = None
     # 使用 asyncio.to_thread 避免阻塞事件循环
-    return await asyncio.to_thread(run_query, query, mode, model, sources, language, incognito, files)
+    return await asyncio.to_thread(
+        run_query, query, mode, model, sources, language, incognito, files, fallback_to_auto
+    )

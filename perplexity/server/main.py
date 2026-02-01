@@ -5,6 +5,10 @@ Imports all route modules to register them with the FastMCP app.
 
 import argparse
 
+# Initialize logging before importing other modules
+from ..logger import setup_logger
+setup_logger()
+
 from .app import mcp, get_pool
 
 # Import route modules to register tools and endpoints with the mcp instance

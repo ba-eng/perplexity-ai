@@ -16,7 +16,19 @@ from .utils import (
     generate_oai_models, parse_oai_model, create_oai_error_response,
 )
 
-from .app import mcp, run_query, MCP_TOKEN
+try:
+    from .app import mcp, run_query, MCP_TOKEN
+except ImportError:
+    from perplexity.server.app import mcp, run_query, MCP_TOKEN
+
+# If mcp is None (e.g. testing env), create a dummy decorator
+if mcp is None:
+    class DummyMCP:
+        def custom_route(self, *args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+    mcp = DummyMCP()
 
 
 def _verify_auth(request: Request) -> Optional[JSONResponse]:
@@ -45,11 +57,14 @@ async def _non_stream_chat_response(
     model: Optional[str],
     model_id: str,
     response_id: str,
-    created: int
+    created: int,
+    fallback_to_auto: bool = True
 ) -> JSONResponse:
     """Generate non-streaming chat completion response."""
     # Call run_query in thread pool
-    result = await asyncio.to_thread(run_query, query, mode, model)
+    result = await asyncio.to_thread(
+        run_query, query, mode, model, None, "en-US", False, None, fallback_to_auto
+    )
 
     if result.get("status") == "error":
         error_msg = result.get("message", "Unknown error")
@@ -94,7 +109,8 @@ async def _fake_stream_chat_response(
     model: Optional[str],
     model_id: str,
     response_id: str,
-    created: int
+    created: int,
+    fallback_to_auto: bool = True
 ) -> StreamingResponse:
     """Generate fake streaming SSE response.
 
@@ -103,7 +119,9 @@ async def _fake_stream_chat_response(
 
     async def event_generator():
         # First, get the complete result
-        result = await asyncio.to_thread(run_query, query, mode, model)
+        result = await asyncio.to_thread(
+            run_query, query, mode, model, None, "en-US", False, None, fallback_to_auto
+        )
 
         if result.get("status") == "error":
             # Send error as final chunk

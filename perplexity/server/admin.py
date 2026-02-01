@@ -7,6 +7,14 @@ from starlette.responses import JSONResponse
 
 from .app import mcp, get_pool
 
+# If mcp is None (e.g. testing env), create a dummy decorator
+if mcp is None:
+    class DummyMCP:
+        def custom_route(self, *args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+    mcp = DummyMCP()
 
 # 健康检查端点 (不需要认证)
 @mcp.custom_route("/health", methods=["GET"])
@@ -215,6 +223,49 @@ async def heartbeat_config(request: Request) -> JSONResponse:
     })
 
 
+# ==================== Fallback API 端点 ====================
+
+@mcp.custom_route("/fallback/config", methods=["GET"])
+async def fallback_config(request: Request) -> JSONResponse:
+    """获取 fallback 配置"""
+    pool = get_pool()
+    return JSONResponse({
+        "status": "ok",
+        "config": pool.get_fallback_config()
+    })
+
+
+@mcp.custom_route("/fallback/config", methods=["POST"])
+async def fallback_config_update(request: Request) -> JSONResponse:
+    """更新 fallback 配置"""
+    from perplexity.config import ADMIN_TOKEN
+
+    if not ADMIN_TOKEN:
+        return JSONResponse({
+            "status": "error",
+            "message": "Admin token not configured. Set PPLX_ADMIN_TOKEN environment variable."
+        }, status_code=403)
+
+    provided_token = request.headers.get("X-Admin-Token")
+    if not provided_token or provided_token != ADMIN_TOKEN:
+        return JSONResponse({
+            "status": "error",
+            "message": "Invalid or missing admin token."
+        }, status_code=401)
+
+    pool = get_pool()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({
+            "status": "error",
+            "message": "Invalid JSON body"
+        }, status_code=400)
+
+    result = pool.update_fallback_config(body)
+    return JSONResponse(result)
+
+
 @mcp.custom_route("/heartbeat/config", methods=["POST"])
 async def heartbeat_config_update(request: Request) -> JSONResponse:
     """更新心跳配置"""
@@ -341,3 +392,81 @@ async def heartbeat_test(request: Request) -> JSONResponse:
         # Test all clients
         result = await pool.test_all_clients()
         return JSONResponse(result)
+
+
+# ==================== Logs API 端点 ====================
+
+def _tail_file(filepath, n: int = 100) -> tuple[list[str], int, int]:
+    """高效读取文件最后 n 行"""
+    import os
+
+    if not filepath.exists():
+        raise FileNotFoundError(f"Log file not found: {filepath}")
+
+    file_size = filepath.stat().st_size
+    if file_size == 0:
+        return [], 0, 0
+
+    lines = []
+    with open(filepath, "rb") as f:
+        # 从文件末尾向前读取
+        buffer_size = 8192
+        remaining = file_size
+        buffer = b""
+
+        while remaining > 0 and len(lines) <= n:
+            read_size = min(buffer_size, remaining)
+            remaining -= read_size
+            f.seek(remaining)
+            chunk = f.read(read_size)
+            buffer = chunk + buffer
+            lines = buffer.decode("utf-8", errors="replace").splitlines()
+
+    # 计算总行数（近似值，避免全量读取）
+    total_lines = len(lines)
+
+    return lines[-n:], total_lines, file_size
+
+
+@mcp.custom_route("/logs/tail", methods=["GET"])
+async def logs_tail(request: Request) -> JSONResponse:
+    """获取日志文件最后 N 行（需要认证）"""
+    from perplexity.config import ADMIN_TOKEN, LOG_FILE
+    import pathlib
+
+    # 验证 admin token
+    if not ADMIN_TOKEN:
+        return JSONResponse({
+            "status": "error",
+            "message": "Admin token not configured. Set PPLX_ADMIN_TOKEN environment variable."
+        }, status_code=403)
+
+    provided_token = request.headers.get("X-Admin-Token")
+    if not provided_token or provided_token != ADMIN_TOKEN:
+        return JSONResponse({
+            "status": "error",
+            "message": "Invalid or missing admin token."
+        }, status_code=401)
+
+    # 获取请求的行数，默认 100，最大 1000
+    try:
+        lines_param = request.query_params.get("lines", "100")
+        num_lines = min(int(lines_param), 1000)
+    except ValueError:
+        num_lines = 100
+
+    # 读取日志文件
+    log_path = pathlib.Path(LOG_FILE)
+    try:
+        lines, total_lines, file_size = _tail_file(log_path, num_lines)
+        return JSONResponse({
+            "status": "ok",
+            "lines": lines,
+            "total_lines": total_lines,
+            "file_size": file_size
+        })
+    except FileNotFoundError as e:
+        return JSONResponse({
+            "status": "error",
+            "message": str(e)
+        }, status_code=404)

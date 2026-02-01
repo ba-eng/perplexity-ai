@@ -14,8 +14,20 @@ import ssl
 import time
 from threading import Thread
 
-from curl_cffi import requests
-from websocket import WebSocketApp
+# Try importing curl_cffi, but allow it to fail for testing environments
+try:
+    from curl_cffi import requests
+except ImportError:
+    # Minimal stub
+    class requests:
+        class Session:
+            def __init__(self, *args, **kwargs): pass
+
+try:
+    from websocket import WebSocketApp
+except ImportError:
+    # Allow import failure for tests that don't use LabsClient
+    WebSocketApp = None
 
 from .config import DEFAULT_HEADERS, ENDPOINT_SOCKET_IO
 
