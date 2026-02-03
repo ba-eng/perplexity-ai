@@ -503,6 +503,38 @@ class ClientPool:
                 return {"status": "error", "message": f"Client '{client_id}' not found"}
             return {"status": "ok", "data": wrapper.get_user_info()}
 
+    def get_client_state(self, client_id: str) -> str:
+        """
+        Get the current state of a specific client.
+
+        Args:
+            client_id: The ID of the client
+
+        Returns:
+            Client state: "normal", "downgrade", "offline", or "unknown"
+        """
+        with self._lock:
+            wrapper = self.clients.get(client_id)
+            if not wrapper:
+                return "unknown"
+            return wrapper.state
+
+    def get_client_weight(self, client_id: str) -> int:
+        """
+        Get the current weight of a specific client.
+
+        Args:
+            client_id: The ID of the client
+
+        Returns:
+            Client weight (0-100), or 0 if client not found
+        """
+        with self._lock:
+            wrapper = self.clients.get(client_id)
+            if not wrapper:
+                return 0
+            return wrapper.weight
+
     def get_all_clients_user_info(self) -> Dict[str, Any]:
         """
         Get user session information for all clients.
@@ -654,11 +686,16 @@ class ClientPool:
 
         question = self._heartbeat_config.get("question", "现在是农历几月几号？")
         prev_state = wrapper.state
+        logger.debug(f"[{client_id}] Starting heartbeat test, prev_state={prev_state}")
 
         try:
             # First, verify the user session is valid (logged in)
+            logger.debug(f"[{client_id}] Fetching user_info from auth session...")
             user_info = await asyncio.to_thread(client.get_user_info)
+            logger.debug(f"[{client_id}] user_info response: {user_info}")
+
             is_logged_in = user_info and user_info.get("user")
+            logger.debug(f"[{client_id}] is_logged_in={is_logged_in}")
 
             pro_success = False
             pro_error = None
@@ -667,6 +704,7 @@ class ClientPool:
                 # Perform a Pro mode search query to verify Pro account status
                 # Using mode="pro" ensures we're testing actual Pro capabilities,
                 # not just basic anonymous access
+                logger.debug(f"[{client_id}] User logged in, testing Pro mode...")
                 try:
                     response = await asyncio.to_thread(
                         client.search,
@@ -679,11 +717,16 @@ class ClientPool:
                         language="zh-CN",
                         incognito=True,
                     )
+                    logger.debug(f"[{client_id}] Pro mode response keys: {response.keys() if response else None}")
                     if response and "answer" in response:
                         pro_success = True
+                        logger.debug(f"[{client_id}] Pro mode test succeeded")
+                    else:
+                        logger.debug(f"[{client_id}] Pro mode response missing 'answer' key")
                 except Exception as e:
                     pro_error = e
                     logger.warning(f"Pro mode test failed for client '{client_id}': {e}")
+                    logger.debug(f"[{client_id}] Pro mode exception: {type(e).__name__}: {e}")
 
                 # Check if response contains answer (Pro mode success)
                 if pro_success:
@@ -691,6 +734,7 @@ class ClientPool:
                         wrapper.state = "normal"
                         wrapper.last_heartbeat = time.time()
                     logger.info(f"Heartbeat test passed for client '{client_id}'")
+                    logger.debug(f"[{client_id}] State changed: {prev_state} -> normal")
                     return {"status": "ok", "state": "normal", "client_id": client_id}
 
                 # Pro mode failed, try auto mode to check for downgrade
@@ -698,8 +742,10 @@ class ClientPool:
             else:
                 # Not logged in, skip pro mode and test auto mode directly
                 logger.info(f"Client '{client_id}' not logged in, testing auto mode directly...")
+                logger.debug(f"[{client_id}] Skipping Pro mode test (not logged in)")
 
             # Test auto mode
+            logger.debug(f"[{client_id}] Testing Auto mode...")
             auto_success = False
             try:
                 auto_response = await asyncio.to_thread(
@@ -713,16 +759,22 @@ class ClientPool:
                     language="zh-CN",
                     incognito=True,
                 )
+                logger.debug(f"[{client_id}] Auto mode response keys: {auto_response.keys() if auto_response else None}")
                 if auto_response and "answer" in auto_response:
                     auto_success = True
+                    logger.debug(f"[{client_id}] Auto mode test succeeded")
+                else:
+                    logger.debug(f"[{client_id}] Auto mode response missing 'answer' key")
             except Exception as e:
                 logger.warning(f"Auto mode test failed for client '{client_id}': {e}")
+                logger.debug(f"[{client_id}] Auto mode exception: {type(e).__name__}: {e}")
 
             if auto_success:
                 # Pro failed (or not tested) but auto succeeded - account is downgraded
                 with self._lock:
                     wrapper.state = "downgrade"
                     wrapper.last_heartbeat = time.time()
+                logger.debug(f"[{client_id}] State changed: {prev_state} -> downgrade")
                 if is_logged_in:
                     logger.warning(f"Client '{client_id}' is downgraded (pro failed, auto succeeded)")
                 else:
@@ -740,6 +792,7 @@ class ClientPool:
                 with self._lock:
                     wrapper.state = "offline"
                     wrapper.last_heartbeat = time.time()
+                logger.debug(f"[{client_id}] State changed: {prev_state} -> offline")
                 logger.warning(f"Heartbeat test failed for client '{client_id}': both pro and auto modes failed")
 
                 # Send Telegram notification if state changed to offline
@@ -756,6 +809,7 @@ class ClientPool:
                 wrapper.state = "offline"
                 wrapper.last_heartbeat = time.time()
             logger.error(f"Heartbeat test failed for client '{client_id}': {e}")
+            logger.debug(f"[{client_id}] Unexpected exception: {type(e).__name__}: {e}")
 
             # Send Telegram notification if state changed to offline
             if prev_state != "offline":

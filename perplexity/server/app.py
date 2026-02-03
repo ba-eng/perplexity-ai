@@ -162,13 +162,16 @@ def run_query(
 
     Features:
     - Rotates through all available clients in the pool on failure
-    - No per-client retry - fails fast and moves to next client
-    - Falls back to anonymous auto mode if all clients fail (when enabled)
+    - Prioritizes non-downgraded clients for Pro mode requests
+    - Falls back to auto mode using highest-weight client if all Pro clients exhausted
     - Validates query and files once before execution
 
     Args:
-        fallback_to_auto: If True, attempt anonymous auto mode search when all clients fail
+        fallback_to_auto: If True, attempt auto mode fallback when all Pro clients fail
     """
+    from ..logger import get_logger
+    logger = get_logger("server.app")
+
     pool = get_pool()
 
     # --- 1. Stateless Validation ---
@@ -191,9 +194,16 @@ def run_query(
             "message": str(exc),
         }
 
-    # --- 2. Client Pool Rotation ---
-    # Try each available client once, no per-client retry
+    # --- 2. Check if fallback to auto is enabled ---
+    should_fallback = fallback_to_auto and pool.is_fallback_to_auto_enabled()
+    is_pro_mode = mode in ("pro", "reasoning", "deep research")
+
+    logger.debug(f"Starting query: mode={mode}, model={model}, fallback_enabled={should_fallback}, is_pro_mode={is_pro_mode}")
+
+    # --- 3. Client Pool Rotation ---
+    # For Pro mode: first try non-downgraded clients, then fallback to auto if enabled
     attempted_clients = set()
+    skipped_downgraded_clients = []
     last_error = None
     total_clients = len(pool.clients)
 
@@ -205,20 +215,33 @@ def run_query(
             # All clients are in backoff or none exist
             if not attempted_clients:
                 earliest = pool.get_earliest_available_time()
-                # Don't return error yet - try fallback first
                 last_error = Exception(f"All clients are currently unavailable. Earliest available at: {earliest}")
-            break  # Stop trying if no clients are available
+            break
 
-        if client_id in attempted_clients:
-            # Already tried this client, skip to avoid infinite loop
+        if client_id in attempted_clients or client_id in [c[0] for c in skipped_downgraded_clients]:
+            continue
+
+        # Check client state
+        client_state = pool.get_client_state(client_id)
+        client_weight = pool.get_client_weight(client_id)
+
+        logger.debug(f"[{client_id}] Checking client: state={client_state}, weight={client_weight}, requested_mode={mode}")
+
+        # For Pro mode: skip downgraded clients first, try Pro clients
+        if is_pro_mode and client_state == "downgrade":
+            logger.debug(f"[{client_id}] Client is DOWNGRADED, skipping for Pro mode (will retry with fallback if enabled)")
+            skipped_downgraded_clients.append((client_id, client, client_weight))
             continue
 
         attempted_clients.add(client_id)
+        logger.debug(f"[{client_id}] Selected client for Pro mode, state={client_state}")
 
         try:
-            # Stateful Validation (Depends on client properties)
+            # Stateful Validation
             validate_search_params(mode, model, chosen_sources, own_account=client.own)
             validate_query_limits(client.copilot, client.file_upload, mode, len(normalized_files))
+
+            logger.debug(f"[{client_id}] Executing search: mode={mode}, model={model}")
 
             response = client.search(
                 clean_query,
@@ -234,24 +257,23 @@ def run_query(
             # Success
             pool.mark_client_success(client_id)
             clean_result = extract_clean_result(response)
+            logger.debug(f"[{client_id}] Query succeeded with Pro mode")
             return {"status": "ok", "data": clean_result}
 
         except ValidationError as exc:
             last_error = exc
             error_msg = str(exc).lower()
-            # Heuristic: Is this a client-specific limitation or user error?
             is_client_limit = any(kw in error_msg for kw in ["pro", "limit", "account", "upload", "quota", "remaining"])
 
             if is_client_limit:
-                # Client-specific limitation - mark failure and try next client
+                logger.debug(f"[{client_id}] Client limit error: {exc}")
                 if mode == "pro":
                     pool.mark_client_pro_failure(client_id)
                 else:
                     pool.mark_client_failure(client_id)
-                # Continue to next client
                 continue
             else:
-                # User input error (e.g. "Invalid model", "Invalid sources") - do not failover
+                logger.debug(f"[{client_id}] Validation error (user input): {exc}")
                 return {
                     "status": "error",
                     "error_type": "ValidationError",
@@ -261,53 +283,92 @@ def run_query(
         except Exception as exc:
             last_error = exc
             error_msg = str(exc).lower()
+            logger.debug(f"[{client_id}] Request exception: {type(exc).__name__}: {exc}")
 
-            # Check if it's a pro-related failure
             if mode == "pro" and any(kw in error_msg for kw in ["pro", "quota", "limit", "remaining"]):
                 pool.mark_client_pro_failure(client_id)
             else:
-                # General failure - mark and continue to next client
                 pool.mark_client_failure(client_id)
-            # Continue to next client
             continue
 
-    # --- 3. Fallback to Anonymous Auto Mode ---
-    # Use config setting if fallback_to_auto parameter is not explicitly set (True by default)
-    # Check pool's fallback config for the actual setting
-    should_fallback = fallback_to_auto and pool.is_fallback_to_auto_enabled()
+    # --- 4. Fallback: Use highest-weight downgraded client with auto mode ---
+    if should_fallback and is_pro_mode and skipped_downgraded_clients:
+        # Sort by weight descending to get highest-weight client
+        skipped_downgraded_clients.sort(key=lambda x: x[2], reverse=True)
+        best_client_id, best_client, best_weight = skipped_downgraded_clients[0]
+
+        logger.info(
+            f"All {len(skipped_downgraded_clients)} Pro clients are DOWNGRADED. "
+            f"Fallback enabled, using highest-weight client [{best_client_id}] (weight={best_weight}) with auto mode"
+        )
+        logger.warning(
+            f"[{best_client_id}] DOWNGRADE FALLBACK: switching from mode='{mode}' model='{model}' to mode='auto'"
+        )
+
+        try:
+            validate_search_params("auto", None, chosen_sources, own_account=best_client.own)
+
+            logger.debug(f"[{best_client_id}] Executing fallback search: mode=auto, model=None")
+
+            response = best_client.search(
+                clean_query,
+                mode="auto",
+                model=None,
+                sources=chosen_sources,
+                files={},  # auto mode doesn't support files
+                stream=False,
+                language=language,
+                incognito=incognito,
+            )
+
+            if response and "answer" in response:
+                pool.mark_client_success(best_client_id)
+                clean_result = extract_clean_result(response)
+                clean_result["fallback"] = True
+                clean_result["fallback_mode"] = "auto"
+                clean_result["original_mode"] = mode
+                clean_result["original_model"] = model
+                logger.info(f"[{best_client_id}] DOWNGRADE FALLBACK succeeded: '{mode}' -> 'auto'")
+                return {"status": "ok", "data": clean_result}
+            else:
+                logger.warning(f"[{best_client_id}] DOWNGRADE FALLBACK failed: no answer in response")
+                last_error = Exception("Fallback search returned no answer")
+
+        except Exception as fallback_exc:
+            logger.warning(f"[{best_client_id}] DOWNGRADE FALLBACK failed: {fallback_exc}")
+            last_error = fallback_exc
+
+    # --- 5. Last resort: Anonymous auto mode fallback ---
     if should_fallback and mode != "auto":
         try:
-            from ..logger import get_logger
-            logger = get_logger("server.app")
-            logger.info("All clients failed, attempting fallback to anonymous auto mode...")
+            logger.info("All clients exhausted, attempting anonymous auto mode fallback...")
 
-            # Create anonymous client (no cookies)
             anonymous_client = Client({})
             response = anonymous_client.search(
                 clean_query,
                 mode="auto",
-                model=None,  # auto mode doesn't support model selection
+                model=None,
                 sources=chosen_sources,
-                files={},  # auto mode doesn't support file upload
+                files={},
                 stream=False,
                 language=language,
                 incognito=True,
             )
 
             if response and "answer" in response:
-                logger.info("Fallback to anonymous auto mode succeeded")
+                logger.info("Anonymous auto mode fallback succeeded")
                 clean_result = extract_clean_result(response)
-                clean_result["fallback"] = True  # Mark as fallback result
-                clean_result["fallback_mode"] = "auto"
+                clean_result["fallback"] = True
+                clean_result["fallback_mode"] = "anonymous_auto"
                 return {"status": "ok", "data": clean_result}
             else:
-                logger.warning("Fallback to anonymous auto mode failed: no answer in response")
-        except Exception as fallback_exc:
-            from ..logger import get_logger
-            logger = get_logger("server.app")
-            logger.warning(f"Fallback to anonymous auto mode failed: {fallback_exc}")
+                logger.warning("Anonymous auto mode fallback failed: no answer in response")
+        except Exception as anon_exc:
+            logger.warning(f"Anonymous auto mode fallback failed: {anon_exc}")
 
-    # --- 4. Final Error Handling ---
+    # --- 6. Final Error Handling ---
+    total_tried = len(attempted_clients) + len(skipped_downgraded_clients)
+    logger.warning(f"Query failed after trying {total_tried} clients (Pro: {len(attempted_clients)}, Downgraded: {len(skipped_downgraded_clients)}): {last_error}")
     return {
         "status": "error",
         "error_type": last_error.__class__.__name__ if last_error else "RequestFailed",
