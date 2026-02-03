@@ -78,7 +78,7 @@ class Client:
         self.timestamp = format(random.getrandbits(32), "08x")
 
         # Initialize session by making a GET request
-        self.session.get(ENDPOINT_AUTH_SESSION)
+        self.session.get(ENDPOINT_AUTH_SESSION, timeout=30)
 
     @property
     def cookies(self) -> dict:
@@ -98,7 +98,7 @@ class Client:
                   or empty dict if anonymous/not logged in.
         """
         try:
-            resp = self.session.get(ENDPOINT_AUTH_SESSION)
+            resp = self.session.get(ENDPOINT_AUTH_SESSION, timeout=30)
             if resp.ok:
                 return resp.json()
             return {}
@@ -125,6 +125,7 @@ class Client:
                         "callbackUrl": "https://www.perplexity.ai/",
                         "json": "true",
                     },
+                    timeout=30,
                 )
 
                 # Check if the response is successful
@@ -235,6 +236,7 @@ class Client:
                         "force_image": False,
                         "source": "default",
                     },
+                    timeout=30,
                 )
             ).json()
 
@@ -249,7 +251,7 @@ class Client:
                 data=file,
             )
 
-            upload_resp = self.session.post(file_upload_info["s3_bucket_url"], multipart=mp)
+            upload_resp = self.session.post(file_upload_info["s3_bucket_url"], multipart=mp, timeout=120)
 
             if not upload_resp.ok:
                 raise Exception("File upload error", upload_resp)
@@ -305,7 +307,7 @@ class Client:
         }
 
         # Send the query request and handle the response
-        resp = self.session.post(ENDPOINT_SSE_ASK, json=json_data, stream=True)
+        resp = self.session.post(ENDPOINT_SSE_ASK, json=json_data, stream=True, timeout=120)
         chunks = []
 
         def stream_response(resp):

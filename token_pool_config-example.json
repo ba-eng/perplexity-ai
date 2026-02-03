@@ -2,7 +2,7 @@
   "heart_beat": {
     "enable": true,
     "question": "今天是几号？",
-    "interval": 24,
+    "interval": 6,
     "tg_bot_token": "your-telegram-bot-token",
     "tg_chat_id": "your-telegram-chat-id"
   },
@@ -11,14 +11,10 @@
   },
   "tokens": [
     {
-      "id": "account1@example.com",
-      "csrf_token": "your-csrf-token-1",
-      "session_token": "your-session-token-1"
-    },
-    {
-      "id": "account2@example.com",
-      "csrf_token": "your-csrf-token-2",
-      "session_token": "your-session-token-2"
+"id": "meralanalex",
+    "csrf_token": "a3ec0eac517ecf9be2844bc65ace6a8cbf978589d0d231c15831ccbb35c55711%7Cb1269d3e2e05ea8f0dd705404d5eaeb729b451a2a8f0b84de59c73bc8a2d205a",
+    "session_token": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..GFoy6N1ymAXK15P9.kqjPOBFxqy8krtNp5o35-dPdD8YfFvmn7sHeJYqN2p_f860fO-usP_ogl-7RjjFyMMu2kE2ACo4yRCOSxxg_gOeQ-IzDD5DfRCbv3urhY0QlLVstkxOaYGcy36_YcgGZzc5tZOzKxDN697K9ldWL9f88dl5YDa3PTfQVyhp1SaxZQGVpr62aO6OhhAZdfAYB31V2NMhACKznm4FFAZckApzh3v3EnpLCCMoAmjqZEPSOfQynv_RJBCi8OODJL90t1ns.E2n-_fsy9iuo-PESjPdGUw"
+  
     }
   ]
 }

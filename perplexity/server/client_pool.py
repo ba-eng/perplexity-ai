@@ -574,10 +574,22 @@ class ClientPool:
         Returns:
             Dict with status and updated config
         """
+        old_enable = self._heartbeat_config.get("enable", False)
+        old_interval = self._heartbeat_config.get("interval", 6)
+
         # Update in-memory config
         for key in ["enable", "question", "interval", "tg_bot_token", "tg_chat_id"]:
             if key in new_config:
                 self._heartbeat_config[key] = new_config[key]
+
+        new_enable = self._heartbeat_config.get("enable", False)
+        new_interval = self._heartbeat_config.get("interval", 6)
+
+        # 热重载心跳任务：如果开关打开且（之前是关的 或 间隔变了），则重启
+        if new_enable and (not old_enable or old_interval != new_interval):
+            logger.info("Heartbeat config changed, restarting heartbeat task...")
+            self.stop_heartbeat()
+            self.start_heartbeat()
 
         # Save to config file if available
         if self._config_path and os.path.exists(self._config_path):
@@ -892,17 +904,21 @@ class ClientPool:
 
     async def _heartbeat_loop(self) -> None:
         """Background task that periodically tests all clients."""
-        interval_hours = self._heartbeat_config.get("interval", 6)
-        interval_seconds = interval_hours * 3600
-
-        logger.info(f"Heartbeat loop started, interval: {interval_hours} hours")
+        logger.info("Heartbeat loop started")
 
         while True:
+            # 动态读取最新的间隔
+            interval_hours = self._heartbeat_config.get("interval", 6)
+            interval_seconds = interval_hours * 3600
+
             try:
-                # Test all clients
-                logger.info("Starting heartbeat test for all clients...")
-                await self.test_all_clients()
-                logger.info("Heartbeat test completed")
+                # Test all clients with timeout protection (10 minutes)
+                logger.info(f"Starting heartbeat test for all clients (interval: {interval_hours}h)...")
+                try:
+                    await asyncio.wait_for(self.test_all_clients(), timeout=600)
+                    logger.info("Heartbeat test completed")
+                except asyncio.TimeoutError:
+                    logger.error("Heartbeat test timed out after 10 minutes, forcing next cycle")
             except Exception as e:
                 logger.error(f"Error in heartbeat loop: {e}")
 
