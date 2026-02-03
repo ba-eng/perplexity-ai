@@ -80,6 +80,15 @@ class Client:
         # Initialize session by making a GET request
         self.session.get(ENDPOINT_AUTH_SESSION)
 
+    @property
+    def cookies(self) -> dict:
+        """
+        Get the current cookies from the session.
+        """
+        if hasattr(self.session, "cookies") and hasattr(self.session.cookies, "get_dict"):
+            return self.session.cookies.get_dict()
+        return self._cookies
+
     def get_user_info(self) -> dict:
         """
         Get user session information from the auth session endpoint.

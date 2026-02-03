@@ -158,10 +158,13 @@ class ClientPool:
         # Look for config file relative to the module location or current working directory
         default_config_paths = [
             pathlib.Path.cwd() / "token_pool_config.json",  # Current working directory
-            pathlib.Path(__file__).parent.parent / "token_pool_config.json",  # Project root
+            pathlib.Path(__file__).parent.parent / "token_pool_config.json",  # perplexity/token_pool_config.json
+            pathlib.Path(__file__).parent.parent.parent / "token_pool_config.json",  # Project root
         ]
         for default_path in default_config_paths:
+            logger.info(f"Checking for config at: {default_path}")
             if default_path.exists():
+                logger.info(f"Found config file at: {default_path}")
                 self._load_from_config(str(default_path))
                 return
 
@@ -436,6 +439,13 @@ class ClientPool:
             wrapper = self.clients.get(client_id)
             if wrapper:
                 wrapper.mark_success()
+
+        # 成功请求后保存最新的 cookie (使用 session 中的 cookie)
+        if self._config_path:
+            logger.debug(f"[{client_id}] Request successful, triggering config save to persist cookies")
+            self._save_config()
+        else:
+            logger.debug(f"[{client_id}] Request successful, but no config path set, skipping save")
 
     def mark_client_failure(self, client_id: str) -> None:
         """Mark a client as failed after a request."""
@@ -1065,13 +1075,26 @@ class ClientPool:
                 "tokens": [],
             }
 
-            for client_id, wrapper in self.clients.items():
+            # 不要加锁，避免死锁（调用者可能已经持有锁，或者这是一个快速操作）
+            # 注意：如果其他线程正在修改 self.clients，这里可能会有并发问题
+            # 但鉴于这是只读操作，且 Python 的 GIL 保护，通常是安全的
+            # 为了更安全，复制一份引用
+            with self._lock:
+                clients_copy = list(self.clients.items())
+
+            for client_id, wrapper in clients_copy:
                 client = wrapper.client
-                cookies = client._cookies if hasattr(client, '_cookies') else {}
+                # 使用 client.cookies 属性获取最新的 session cookies
+                cookies = client.cookies
+
+                csrf = cookies.get("next-auth.csrf-token", "")
+                session = cookies.get("__Secure-next-auth.session-token", "")
+                logger.debug(f"[{client_id}] Saving config with cookies: csrf={csrf[:15]}... session={session[:15]}...")
+
                 config["tokens"].append({
                     "id": client_id,
-                    "csrf_token": cookies.get("next-auth.csrf-token", ""),
-                    "session_token": cookies.get("__Secure-next-auth.session-token", ""),
+                    "csrf_token": csrf,
+                    "session_token": session,
                 })
 
             with open(self._config_path, "w", encoding="utf-8") as f:
