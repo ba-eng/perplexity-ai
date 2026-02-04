@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchPoolStatus, fetchHeartbeatConfig, fetchFallbackConfig, PoolStatus, HeartbeatConfig, FallbackConfig } from 'lib/api'
+import { useAuth } from './useAuth'
 
 export function usePool() {
+  const { adminToken } = useAuth()
   const [data, setData] = useState<PoolStatus>({
     total: 0,
     available: 0,
@@ -14,11 +16,24 @@ export function usePool() {
   const [lastSync, setLastSync] = useState<string | null>(null)
 
   const refreshData = useCallback(async () => {
+    // Requires admin token for heartbeat config
+    if (!adminToken) {
+      // Just fetch pool status if no token
+      try {
+        const poolData = await fetchPoolStatus()
+        setData(poolData)
+        setLastSync(new Date().toLocaleTimeString('en-US', { hour12: false }))
+      } catch (e) {
+        console.error('Failed to fetch pool status:', e)
+      }
+      return
+    }
+
     setIsLoading(true)
     try {
       const [poolData, hbResp, fallbackResp] = await Promise.all([
         fetchPoolStatus(),
-        fetchHeartbeatConfig(),
+        fetchHeartbeatConfig(adminToken),
         fetchFallbackConfig(),
       ])
       setData(poolData)
@@ -35,7 +50,7 @@ export function usePool() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [adminToken])
 
   useEffect(() => {
     refreshData()
