@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..client import Client
+from ..config import SOCKS_PROXY
 from ..logger import get_logger
 
 logger = get_logger("server.client_pool")
@@ -682,7 +683,18 @@ class ClientPool:
                 "text": message,
                 "parse_mode": "HTML"
             }
-            async with aiohttp.ClientSession() as session:
+            connector = None
+            if SOCKS_PROXY:
+                try:
+                    from aiohttp_socks import ProxyConnector
+                    proxy_url = SOCKS_PROXY.split("#")[0] if "#" in SOCKS_PROXY else SOCKS_PROXY
+                    connector = ProxyConnector.from_url(proxy_url)
+                except ImportError:
+                    logger.warning(
+                        "aiohttp_socks not installed, Telegram will use direct connection"
+                    )
+
+            async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(url, json=payload) as resp:
                     if resp.status != 200:
                         logger.error(f"Failed to send Telegram notification: {await resp.text()}")
