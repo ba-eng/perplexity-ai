@@ -31,14 +31,7 @@ export const useVersionCheck = (): VersionCheckResult => {
   useEffect(() => {
     const checkVersion = async () => {
       try {
-        // Parse owner and repo from URL
-        // Expected format: https://github.com/owner/repo
-        const match = REPO_URL.match(/github\.com\/([^/]+)\/([^/]+)/)
-        if (!match) {
-          throw new Error('Invalid repo URL')
-        }
-        const [, owner, repo] = match
-        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`
+        const apiUrl = 'https://api.github.com/repos/escapeWu/perplexity-ai/releases/latest'
 
         // Check cache
         const cached = localStorage.getItem(CACHE_KEY)

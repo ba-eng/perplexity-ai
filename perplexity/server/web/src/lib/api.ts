@@ -53,8 +53,12 @@ export async function verifyAdminToken(token: string): Promise<boolean> {
   return resp.ok
 }
 
-export async function fetchHeartbeatConfig(): Promise<ApiResponse<HeartbeatConfig>> {
-  const resp = await fetch(`${API_BASE}/heartbeat/config`)
+export async function fetchHeartbeatConfig(adminToken: string): Promise<ApiResponse<HeartbeatConfig>> {
+  const resp = await fetch(`${API_BASE}/heartbeat/config`, {
+    headers: {
+      'X-Admin-Token': adminToken,
+    },
+  })
   return resp.json()
 }
 
