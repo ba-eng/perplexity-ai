@@ -1,66 +1,32 @@
-# Perplexity MCP Server Docker Image
-# 使用多阶段构建优化镜像大小
+# 多阶段构建：第一步构建前端WebUI静态资源
+FROM node:18-alpine AS frontend-builder
+WORKDIR /app
+COPY ./perplexity/server/web/package*.json ./
+RUN npm install
+COPY ./perplexity/server/web/ ./
+RUN NODE_OPTIONS=--max-old-space-size=512 npm run build
 
-# ============ 阶段1: 前端构建 ============
-FROM node:20-alpine AS frontend-builder
-
-WORKDIR /frontend
-
-# 复制前端项目文件
-COPY perplexity/server/web/package.json perplexity/server/web/package-lock.json* ./
-
-# 安装依赖
-RUN npm ci --prefer-offline --no-audit
-
-# 复制前端源码
-COPY perplexity/server/web/ ./
-
-# 构建前端
-RUN npm run build
-
-# ============ 阶段2: Python 构建 ============
-FROM python:3.12-slim AS python-builder
-
-WORKDIR /build
-
-# 安装构建依赖 (curl_cffi 需要编译)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# 先复制依赖文件，利用 Docker 缓存
-COPY pyproject.toml README.md ./
-COPY perplexity/ ./perplexity/
-COPY perplexity_async/ ./perplexity_async/
-
-# 安装到独立目录，方便后续复制
-RUN pip install --no-cache-dir --prefix=/install .
-
-# ============ 阶段3: 运行时镜像 ============
-FROM python:3.12-slim
-
+# 第二步：构建后端Python运行镜像
+FROM python:3.11-slim
 WORKDIR /app
 
-# 只安装运行时必需的系统依赖
+# 安装系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 从 Python 构建阶段复制已安装的 Python 包
-COPY --from=python-builder /install/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+# 安装Python依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制应用代码
-COPY perplexity/ ./perplexity/
+# 复制项目完整代码
+COPY . .
 
-# 从前端构建阶段复制构建产物
-COPY --from=frontend-builder /frontend/dist ./perplexity/server/web/dist
+# 把前端构建好的静态资源，复制到项目正确目录
+COPY --from=frontend-builder /app/dist /app/perplexity/server/web/dist
 
-# 设置默认 token pool 配置路径（通过 volume 挂载）
-ENV PPLX_TOKEN_POOL_CONFIG=/app/token_pool_config.json
-
-# 暴露端口
+# 暴露服务端口
 EXPOSE 8000
 
-# 启动命令
-CMD ["python", "-m", "perplexity.server"]
+# 项目原生启动命令，完全兼容Render环境
+CMD ["python", "-m", "uvicorn", "perplexity.server.main:app", "--host", "0.0.0.0", "--port", "8000"]
