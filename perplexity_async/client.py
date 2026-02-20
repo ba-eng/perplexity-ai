@@ -132,10 +132,10 @@ class Client(AsyncMixin):
                     None,
                     "sonar",
                     "gpt-5.2",
-                    "claude-4.5-sonnet",
+                    "claude-4.6-sonnet",
                     "grok-4.1",
                 ],
-                "reasoning": [None, "gpt-5.2-thinking", "claude-4.5-sonnet-thinking", "gemini-3.1-pro", "kimi-k2.5-thinking", "grok-4.1-reasoning"],
+                "reasoning": [None, "gpt-5.2-thinking", "claude-4.6-sonnet-thinking", "gemini-3.1-pro", "kimi-k2.5-thinking", "grok-4.1-reasoning"],
                 "deep research": [None],
                 "copilot": [None, "gemini-3.0-pro", "kimi-k2-thinking"],
             }[mode]
@@ -220,13 +220,13 @@ class Client(AsyncMixin):
                         None: "pplx_pro",
                         "sonar": "experimental",
                         "gpt-5.2": "gpt52",
-                        "claude-4.5-sonnet": "claude45sonnet",
+                        "claude-4.6-sonnet": "claude46sonnet",
                         "grok-4.1": "grok41nonreasoning",
                     },
                     "reasoning": {
                         None: "pplx_reasoning",
                         "gpt-5.2-thinking": "gpt52_thinking",
-                        "claude-4.5-sonnet-thinking": "claude45sonnetthinking",
+                        "claude-4.6-sonnet-thinking": "claude46sonnetthinking",
                         "kimi-k2.5-thinking": "kimik25thinking",
                         "gemini-3.1-pro": "gemini31pro_high",
                         "grok-4.1-reasoning": "grok41reasoning",
@@ -314,5 +314,6 @@ class Client(AsyncMixin):
 
             elif content.startswith("event: end_of_stream\r\n"):
                 return chunks[-1] if chunks else {}
+
 
 
