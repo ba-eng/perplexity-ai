@@ -403,3 +403,5 @@ class Client:
 
             elif content.startswith("event: end_of_stream\r\n"):
                 return chunks[-1] if chunks else {}
+                
+        return chunks[-1] if chunks else {}
