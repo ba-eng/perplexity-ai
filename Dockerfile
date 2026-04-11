@@ -45,7 +45,7 @@ WORKDIR /app
 # 只安装运行时必需的系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
 # 从 Python 构建阶段复制已安装的 Python 包
 COPY --from=python-builder /install/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
@@ -56,11 +56,15 @@ COPY perplexity/ ./perplexity/
 # 从前端构建阶段复制构建产物
 COPY --from=frontend-builder /frontend/dist ./perplexity/server/web/dist
 
-# 设置默认 token pool 配置路径（通过 volume 挂载）
+# 复制启动脚本
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# 默认配置文件位置
 ENV PPLX_TOKEN_POOL_CONFIG=/app/token_pool_config.json
 
 # 暴露端口
 EXPOSE 8000
 
 # 启动命令
-CMD ["python", "-m", "perplexity.server"]
+CMD ["/app/start.sh"]
