@@ -258,6 +258,9 @@ def run_query(
                 incognito=incognito,
             )
 
+            if not response or not isinstance(response, dict):
+                raise Exception("Empty or invalid response from upstream")
+          
             # Success
             pool.mark_client_success(client_id)
             clean_result = extract_clean_result(response)
