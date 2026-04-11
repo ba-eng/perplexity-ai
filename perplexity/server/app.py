@@ -3,6 +3,7 @@ FastMCP application instance and shared utilities.
 """
 
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Iterable, List, Optional, Union
 
@@ -261,6 +262,23 @@ def run_query(
                 incognito=incognito,
             )
 
+            response = None
+
+            for _ in range(2):
+                response = client.search(
+                    clean_query,
+                    mode=mode,
+                    model=model,
+                    sources=chosen_sources,
+                    files=normalized_files,
+                    stream=False,
+                    language=language,
+                    incognito=incognito,
+                )
+                if response and isinstance(response, dict):
+                    break
+                time.sleep(1)
+            
             if not response or not isinstance(response, dict):
                 raise Exception("Empty or invalid response from upstream")
           
@@ -294,7 +312,11 @@ def run_query(
             last_error = exc
             error_msg = str(exc).lower()
             logger.debug(f"[{client_id}] Request exception: {type(exc).__name__}: {exc}")
-
+        
+            if "empty or invalid response from upstream" in error_msg:
+                logger.warning(f"[{client_id}] Soft upstream failure: {exc}")
+                continue
+        
             if mode == "pro" and any(kw in error_msg for kw in ["pro", "quota", "limit", "remaining"]):
                 pool.mark_client_pro_failure(client_id)
             else:
