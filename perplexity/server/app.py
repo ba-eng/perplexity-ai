@@ -106,6 +106,9 @@ def normalize_files(files: Optional[Union[Dict[str, Any], Iterable[str]]]) -> Di
 
 def extract_clean_result(response: Dict[str, Any]) -> Dict[str, Any]:
     """Extract the final answer and source links from the search response."""
+    if not response or not isinstance(response, dict):
+        return {"answer": "", "sources": []}
+        
     result = {}
 
     # 提取最终答案
