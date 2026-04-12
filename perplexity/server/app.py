@@ -315,6 +315,61 @@ def run_query(
         
             if "empty or invalid response from upstream" in error_msg:
                 logger.warning(f"[{client_id}] Soft upstream failure: {exc}")
+                
+                fallback_plan = []
+
+                if mode == "reasoning":
+                    fallback_plan = [
+                        ("reasoning", None, normalized_files),
+                        ("pro", None, normalized_files),
+                        ("auto", None, {}),
+                    ]
+                elif mode == "pro":
+                    fallback_plan = [
+                        ("pro", None, normalized_files),
+                        ("auto", None, {}),
+                    ]
+                else:
+                    fallback_plan = [
+                        ("auto", None, {}),
+                    ]
+            
+                for fb_mode, fb_model, fb_files in fallback_plan:
+                    try:
+                        validate_search_params(
+                            fb_mode,
+                            fb_model,
+                            chosen_sources,
+                            own_account=client.own,
+                        )
+            
+                        fb_response = client.search(
+                            clean_query,
+                            mode=fb_mode,
+                            model=fb_model,
+                            sources=chosen_sources,
+                            files=fb_files,
+                            stream=False,
+                            language=language,
+                            incognito=incognito,
+                        )
+            
+                        if fb_response and isinstance(fb_response, dict):
+                            pool.mark_client_success(client_id)
+                            clean_result = extract_clean_result(fb_response)
+                            clean_result["fallback"] = True
+                            clean_result["fallback_mode"] = fb_mode
+                            clean_result["fallback_model"] = fb_model
+                            clean_result["original_mode"] = mode
+                            clean_result["original_model"] = model
+                            return {"status": "ok", "data": clean_result}
+            
+                    except Exception as fb_exc:
+                        logger.warning(
+                            f"[{client_id}] Same-client fallback failed: "
+                            f"mode={fb_mode}, model={fb_model}, error={fb_exc}"
+                        )
+            
                 continue
         
             if mode == "pro" and any(kw in error_msg for kw in ["pro", "quota", "limit", "remaining"]):
